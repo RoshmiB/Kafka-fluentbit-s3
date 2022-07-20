@@ -1,0 +1,175 @@
+---
+#Deploying zookeeper
+
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: zookeeper-deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zookeeper-1
+  template:
+    metadata:
+      labels:
+        app: zookeeper-1
+    spec:
+      containers:
+      - name: zoo1
+        image: digitalwonderland/zookeeper
+        ports:
+        - containerPort: 2181
+        env:
+        - name: ZOOKEEPER_ID
+          value: "1"
+        - name: ZOOKEEPER_SERVER_1
+          value: zoo1
+
+---
+# Deploying zookeeper service
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: zoo1
+  labels:
+    app: zookeeper-1
+spec:
+  ports:
+  - name: client
+    port: 2181
+    protocol: TCP
+  - name: follower
+    port: 2888
+    protocol: TCP
+  - name: leader
+    port: 3888
+    protocol: TCP
+  selector:
+    app: zookeeper-1
+
+---
+# Deploying Kafka service
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-service
+  labels:
+    name: kafka
+spec:
+  ports:
+  - port: 9092
+    name: kafka-port
+    protocol: TCP
+  selector:
+    app: kafka
+    id: "0"
+  type: NodePort
+
+---
+# Deploying ingress alb for kafka service
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: default
+  name: ingress-kafka
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: kafka-service
+              port:
+                number: 9092
+---
+# Deploying kafka brokers
+
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: kafka-broker0
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+        app: kafka
+        id: "0"
+  template:
+    metadata:
+      labels:
+        app: kafka
+        id: "0"
+    spec:
+      containers:
+      - name: kafka
+        image: wurstmeister/kafka
+        ports:
+        - containerPort: 9092
+        env:
+        - name: KAFKA_ADVERTISED_PORT
+          value: "80"
+        - name: KAFKA_ADVERTISED_HOST_NAME
+          value: k8s-default-ingressk-c2ba40f529-232638173.ap-south-1.elb.amazonaws.com
+        - name: KAFKA_ZOOKEEPER_CONNECT
+          value: zoo1:2181
+        - name: KAFKA_BROKER_ID
+          value: "0"
+        - name: KAFKA_CREATE_TOPICS
+          value: admintome-test:1:1
+
+
+#https://faun.pub/aws-eks-the-ultimate-guide-to-deploy-an-ingress-controller-on-kubernetes-5952cb27c067
+#aws eks describe-cluster --name test-cluster2 --query "cluster.identity.oidc.issuer" --output text
+#aws iam list-open-id-connect-providers | grep B218AA51244D8A38A44C93DDC4231FBE
+#(base) rajaguru@RoshmiRajas-MacBook-Pro:Modules/dev $ eksctl utils associate-iam-oidc-provider --cluster test-cluster2 --approve
+#2022-07-20 10:59:33 [ℹ]  eksctl version 0.91.0
+#2022-07-20 10:59:33 [ℹ]  using region ap-south-1
+#2022-07-20 10:59:35 [ℹ]  will create IAM Open ID Connect provider for cluster "test-cluster2" in "ap-south-1"
+#2022-07-20 10:59:35 [✔]  created IAM Open ID Connect provider for cluster "test-cluster2" in "ap-south-1"
+#curl -o iam_policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.4.2/docs/install/iam_policy.json
+#aws iam create-policy \
+#    --policy-name AWSLoadBalancerControllerIAMPolicy \
+#    --policy-document file://iam_policy.json
+
+#eksctl create iamserviceaccount \
+#  --cluster=test-cluster2 \
+#  --namespace=kube-system \
+#  --name=aws-load-balancer-controller \
+#  --role-name "AmazonEKSLoadBalancerControllerRole" \
+#  --attach-policy-arn=arn:aws:iam::323652704761:policy/AWSLoadBalancerControllerIAMPolicy \
+#  --approve
+
+#helm repo add eks https://aws.github.io/eks-charts
+#helm repo update
+
+#ecr:- https://docs.aws.amazon.com/eks/latest/userguide/add-ons-images.html
+
+# helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+#  -n kube-system \
+#  --set clusterName=test-cluster2 \
+#  --set serviceAccount.create=false \
+#  --set serviceAccount.name=aws-load-balancer-controller --set region=ap-south-1\
+#   --set vpcId=vpc-03b7cca4a06293e28\
+#   --set image.repository=602401143452.dkr.ecr.ap-south-1.amazonaws.com/amazon/aws-load-balancer-controller
+
+# NAME: aws-load-balancer-controller
+# LAST DEPLOYED: Wed Jul 20 11:27:44 2022
+# NAMESPACE: kube-system
+# STATUS: deployed
+# REVISION: 1
+# TEST SUITE: None
+# NOTES:
+# AWS Load Balancer controller installed!
+#kubectl get deployment -n kube-system aws-load-balancer-controller
+#kubectl get ingress/ingress-kafka -n default
+#helm repo add fluent https://fluent.github.io/helm-charts
+#helm repo update
